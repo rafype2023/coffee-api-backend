@@ -1,38 +1,46 @@
 const express = require('express');
 const cors = require('cors');
+const sgMail = require('@sendgrid/mail');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// --- Configuración de SendGrid ---
+// La API Key se toma de las variables de entorno de Render.com
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+  console.log('SendGrid API Key configurada.');
+} else {
+  console.warn('ADVERTENCIA: SENDGRID_API_KEY no encontrada. El envío de emails está deshabilitado.');
+}
+
 
 // --- Middlewares ---
 app.use(express.json());
 
 // --- Configuración de CORS ---
-// ⬇️ IMPORTANTE: Reemplaza esta URL con la URL de tu frontend en Render.com
 const frontendURL = 'https://coffee-pre-order-app.onrender.com'; 
 app.use(cors({
   origin: frontendURL
 }));
 
 
-// --- Almacenamiento en Memoria (para simplicidad) ---
-// En una aplicación real, usarías una base de datos (PostgreSQL, MongoDB, etc.)
+// --- Almacenamiento en Memoria ---
 const ordersStore = new Map();
 
 
 // --- Rutas de la API ---
 
 // 1. Endpoint para CREAR un nuevo pedido
-app.post('/api/orders', (req, res) => {
+app.post('/api/orders', async (req, res) => { // Convertida a async para esperar el envío del email
   try {
     const orderDetails = req.body;
 
-    // Validación simple
     if (!orderDetails.employeeEmail || !orderDetails.employeeName) {
       return res.status(400).json({ success: false, message: 'Faltan datos del empleado.' });
     }
 
     const orderId = `ORDER-${Date.now()}`;
-    // Genera un código de 6 dígitos
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     ordersStore.set(orderId, {
@@ -41,11 +49,37 @@ app.post('/api/orders', (req, res) => {
       status: 'Pending'
     });
 
-    // --- Simulación de envío de correo ---
-    // En una app real, aquí enviarías un email al usuario.
-    // Para este proyecto, lo mostraremos en los logs del servidor de Render.
-    console.log(`✅ Pedido recibido de: ${orderDetails.employeeEmail}`);
-    console.log(`🔑 Su código de verificación es: ${verificationCode}`);
+    // --- Envío de email REAL con SendGrid ---
+    if (process.env.SENDGRID_API_KEY) {
+      const msg = {
+        to: orderDetails.employeeEmail,
+        // ⬇️ IMPORTANTE: Debes verificar este email en tu cuenta de SendGrid
+        from: 'rafyperez@hotmail.com', 
+        subject: `Tu código de verificación para Café R&P: ${verificationCode}`,
+        html: `
+          <div style="font-family: sans-serif; text-align: center; padding: 20px;">
+            <h2>Hola ${orderDetails.employeeName},</h2>
+            <p>Gracias por tu pedido en Café R&P. Usa el siguiente código para confirmarlo:</p>
+            <p style="font-size: 24px; font-weight: bold; letter-spacing: 5px; background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+              ${verificationCode}
+            </p>
+            <p>Si no has sido tú, por favor ignora este mensaje.</p>
+          </div>
+        `,
+      };
+
+      try {
+        await sgMail.send(msg);
+        console.log(`✅ Email de verificación enviado a: ${orderDetails.employeeEmail}`);
+      } catch (emailError) {
+        console.error("Error al enviar el email con SendGrid:", emailError);
+        // Aún así, continuamos para que la app funcione, pero avisamos del error.
+        // En una app más crítica, podrías querer revertir el pedido aquí.
+      }
+    } else {
+        // Mantenemos el log si SendGrid no está configurado, para poder seguir probando.
+        console.log(`🔑 (SIMULADO) Tu código de verificación es: ${verificationCode}`);
+    }
     // ------------------------------------
 
     res.status(201).json({
